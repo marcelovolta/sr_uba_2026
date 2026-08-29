@@ -15,6 +15,7 @@ parallel on a second machine.
 - `scrape_rym_charts.py` — scrapes the genre chart (album, artist(s), release date, genres) into `albums`/`artists`/`genres`
 - `scrape_reviews.py` — for every album, scrapes language + every review (user, ISO date, star rating) into `users`/`user_reviews`
 - `backfill_artists.py` — one-off repair for the artist-extraction bug described below; kept as a record of the fix and a template for future backfills
+- `merge_dbs.py` — merges another machine's genre DB into this one once both are done scraping (see below)
 - `migrate_add_genre.py`, `fix_fk_references.py` — one-time migrations already applied to get the live DB to the current schema (a fresh DB created via `db.get_connection()` gets this schema from the start, so these don't need to run again)
 - `rym_psychedelia.db` — the resulting database (gitignored — regenerate via the scripts)
 
@@ -40,19 +41,78 @@ parallel on a second machine.
    python scrape_reviews.py       # per-album language + reviews -> users/user_reviews
    ```
 
-**Merging two genre DBs later**: `albums.rank` is chart-relative and only
-unique *within* a genre (enforced via `UNIQUE(genre, rank)`, not a bare
-`UNIQUE(rank)` — this was a real landmine in an earlier schema version, since
-two genre charts both start ranking at 1). `albums.url` stays globally unique
-across genres, since it's RYM's own release URL. `users.username`,
-`artists.url`, and `genres.name` are also globally unique and safe to merge
-directly (a user or artist that appears in two genre charts is the same row).
-So merging is straightforward: `INSERT OR IGNORE` everything from the second
-DB's tables into the first, in dependency order (`artists`, `genres`, `users`
-first; then `albums`; then the junction/detail tables that reference them by
-the *new* DB's `id` values — note `album_id`/`artist_id`/`genre_id` are
-autoincrement ids local to each DB file, so a merge needs to remap those, not
-copy them as-is).
+### Seeding the second machine from an already-scraped DB (optional but recommended)
+
+An album can legitimately rank on more than one RYM genre chart (a
+psych-adjacent album can also chart under punk, say). `albums.genre` only
+ever holds *one* genre — whichever chart discovered it first — by design:
+its whole job is telling a given machine's `scrape_reviews.py` which albums
+are "its own" to fetch reviews for, not describing every genre an album
+belongs to (that's what `album_genres`, tied to RYM's own primary/secondary
+tag list, is for — that's the table to use for actual genre features in a
+recommender). Since `albums.url` is globally unique, if the new machine's own
+chart scrape later encounters an album that's already known (e.g. seeded
+from another genre's export below), it's automatically left alone — same
+`genre`, same `rank`, no duplicate row, and `scrape_reviews.py`'s
+genre-filtered query correctly never picks it up as belonging to the new
+genre. Verified directly: inserting a duplicate `url` under a different
+genre/rank is a no-op (`INSERT OR IGNORE` conflicts on the `url` UNIQUE
+constraint), so this needs no extra code.
+
+Seeding isn't required - the new machine's chart scrape works fine against
+an empty DB - but it means albums shared between the two genres don't get
+their reviews fetched twice. To seed:
+
+```
+cp scraping/rym_psychedelia.db /path/to/transfer/rym_export.db
+```
+
+On the new machine, after cloning the repo and doing the venv/`scrapling
+install` setup above:
+
+```
+cd sr_uba_2026/scraping
+cp /path/to/transfer/rym_export.db rym_<newgenre>.db   # match config.py's DB_PATH naming
+sqlite3 rym_<newgenre>.db "DELETE FROM scraped_pages;"
+```
+
+The `DELETE FROM scraped_pages` step is required, not optional:
+`scraped_pages` is chart-*pagination* bookkeeping (which page numbers have
+been fetched), not genre-scoped. Skip this and the new machine's chart
+scraper will see "page 1..N already scraped" left over from psychedelia and
+silently skip scraping its own genre's pages entirely.
+
+Then edit `config.py`'s `GENRE` and run `scrape_rym_charts.py` →
+`scrape_reviews.py` as normal.
+
+### Merging two genre DBs back together
+
+Once both machines are done, `merge_dbs.py` combines a second genre's DB
+into this one:
+
+```
+python merge_dbs.py /path/to/other_genre.db
+```
+
+It merges every table *except* `scraped_pages` (chart-pagination
+bookkeeping, meaningless once a chart is fully scraped - not needed after
+merging, and not merged). Everything else - `albums`, `artists`,
+`album_artists`, `genres`, `album_genres`, `users`, `user_reviews`,
+`album_details`, `scraped_review_pages` - gets merged.
+
+The reason this needs a real script rather than a raw SQL copy: two DB files
+that both started as a copy of the same export independently assign their
+own autoincrement ids to anything each side discovers afterward, so the same
+integer id can mean two completely different albums/artists/genres in each
+file. `merge_dbs.py` never trusts ids across files - it matches every row by
+its actual real-world identity (`url` for albums/artists, `name` for
+genres, `username` for users, `review_url` for reviews) and remaps foreign
+keys into the target DB's own id space as each row is copied over. Tested
+against a synthetic second-genre DB before relying on it for real: new
+albums/artists/reviews merged in cleanly with fresh ids, a genre tag
+("Punk Rock") that happened to already exist in the target was correctly
+reused rather than duplicated, and every pre-existing shared row was left
+completely untouched.
 
 ## Running unattended (read this before starting a long run)
 
