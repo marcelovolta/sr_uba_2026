@@ -1,0 +1,17 @@
+# Scraped data - regenerate via the scripts, don't commit
+*.db
+*.db.bak
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Debug artifacts from reverse-engineering selectors
+*.html
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs
+*.log

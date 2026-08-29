@@ -1,0 +1,16 @@
+# Generated/raw data - regenerate via the notebooks, not versioned.
+# Several files here exceed GitHub's 100MB per-file limit anyway.
+datos/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Claude Code local session state (per-developer, not shared)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# OS
+.DS_Store
