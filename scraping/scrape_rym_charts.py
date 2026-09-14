@@ -13,7 +13,7 @@ ITEM_SELECTOR = "div.page_charts_section_charts_item"
 WAIT_SELECTOR = ".page_charts_section_charts_item"
 MAX_ATTEMPTS = 2
 PAGE_DELAY_RANGE = (8, 18)
-RATE_LIMIT_STATUSES = {429, 503}
+RATE_LIMIT_STATUSES = {403, 429, 503}
 RATE_LIMIT_COOLDOWN_SECONDS = 11 * 60
 MAX_COOLDOWNS = 8
 

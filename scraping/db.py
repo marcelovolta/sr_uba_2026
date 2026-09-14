@@ -91,6 +91,8 @@ def get_connection():
         conn.execute("ALTER TABLE albums ADD COLUMN language TEXT")
     if "genre" not in cols:
         conn.execute(f"ALTER TABLE albums ADD COLUMN genre TEXT DEFAULT '{GENRE}'")
+    if "cover_url" not in cols:
+        conn.execute("ALTER TABLE albums ADD COLUMN cover_url TEXT")
     return conn
 
 
@@ -175,6 +177,10 @@ def save_review(conn, username, user_url, album_id, review_date, rating, review_
 
 def set_album_language(conn, album_id, language):
     conn.execute("UPDATE albums SET language = ? WHERE id = ?", (language, album_id))
+
+
+def set_album_cover(conn, album_id, cover_url):
+    conn.execute("UPDATE albums SET cover_url = ? WHERE id = ?", (cover_url, album_id))
 
 
 def album_detail_scraped(conn, album_id):

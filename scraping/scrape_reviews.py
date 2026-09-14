@@ -138,13 +138,31 @@ def process_album(conn, session, state, album_id, rank, title, release_url):
                 time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
                 continue
             if reason == "cf_blocked":
-                print(f"album {rank} page {page_num}: cloudflare re-challenge needed, retrying")
-                time.sleep(5)
+                cooldowns_used += 1
+                if cooldowns_used > MAX_COOLDOWNS:
+                    print(f"album {rank} page {page_num}: giving up after {MAX_COOLDOWNS} cooldowns (cloudflare block)")
+                    return False
+                print(f"album {rank} page {page_num}: cloudflare block, cooling down for "
+                      f"{RATE_LIMIT_COOLDOWN_SECONDS}s ({cooldowns_used}/{MAX_COOLDOWNS})")
+                time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
                 continue
             print(f"album {rank} page {page_num}: FAILED (non-rate-limit), skipping this page")
             page_num += 1
             time.sleep(10)
             continue
+
+        if page_num > 1 and "/reviews/" not in resp.url:
+            # Some albums' stored url is RYM's old underscore-slug format, which
+            # redirects to the modern hyphen-slug but drops the /reviews/N/ suffix
+            # entirely, landing back on the base release page. Without this check
+            # every subsequent page re-fetches page 1's reviews forever (they always
+            # come back non-empty), so the album never completes and every later
+            # album in rank order is permanently blocked behind it.
+            print(f"album {rank} page {page_num}: pagination redirected to base release page "
+                  f"({resp.url}) - stale url, treating as end of reviews")
+            db.mark_album_reviews_complete(conn, album_id)
+            conn.commit()
+            return True
 
         if page_num == 1:
             language = extract_language(resp)
@@ -164,6 +182,7 @@ def process_album(conn, session, state, album_id, rank, title, release_url):
 
         if len(reviews) == 0:
             db.mark_album_reviews_complete(conn, album_id)
+            conn.commit()
             return True
 
         page_num += 1
