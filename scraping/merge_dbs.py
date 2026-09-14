@@ -28,22 +28,28 @@ def merge(conn, source_path):
     # --- albums: match by url, remap id ---
     album_id_map = {}
     src_rows = conn.execute(
-        "SELECT id, genre, rank, title, release_date, url, language, page, scraped_at FROM src.albums"
+        "SELECT id, genre, rank, title, release_date, url, language, page, scraped_at, cover_url "
+        "FROM src.albums"
     ).fetchall()
-    inserted = 0
-    for src_id, genre, rank, title, release_date, url, language, page, scraped_at in src_rows:
-        row = conn.execute("SELECT id FROM albums WHERE url = ?", (url,)).fetchone()
+    inserted = cover_backfilled = 0
+    for src_id, genre, rank, title, release_date, url, language, page, scraped_at, cover_url in src_rows:
+        row = conn.execute("SELECT id, cover_url FROM albums WHERE url = ?", (url,)).fetchone()
         if row:
             album_id_map[src_id] = row[0]
+            if row[1] is None and cover_url is not None:
+                conn.execute("UPDATE albums SET cover_url = ? WHERE id = ?", (cover_url, row[0]))
+                cover_backfilled += 1
         else:
             cur = conn.execute(
-                """INSERT INTO albums (genre, rank, title, release_date, url, language, page, scraped_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (genre, rank, title, release_date, url, language, page, scraped_at),
+                """INSERT INTO albums (genre, rank, title, release_date, url, language, page,
+                                       scraped_at, cover_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (genre, rank, title, release_date, url, language, page, scraped_at, cover_url),
             )
             album_id_map[src_id] = cur.lastrowid
             inserted += 1
-    stats["albums"] = f"{inserted} new / {len(src_rows)} total from source"
+    stats["albums"] = (f"{inserted} new, {cover_backfilled} cover_url backfilled "
+                        f"/ {len(src_rows)} total from source")
 
     # --- artists: match by url, remap id ---
     artist_id_map = {}
