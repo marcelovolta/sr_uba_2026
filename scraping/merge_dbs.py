@@ -154,6 +154,32 @@ def merge(conn, source_path):
             updated += 1
     stats["album_details"] = f"{inserted} new, {updated} upgraded to complete / {len(src_rows)} total from source"
 
+    # --- album_metadata: remap album_id; one-shot scrape, keep target's row if it already has one ---
+    src_rows = conn.execute(
+        """SELECT album_id, artist_text, type, released_text, recorded_text, rym_rating,
+                  rym_rating_best, rym_rating_count, ranked_text, genres_primary,
+                  genres_secondary, descriptors, language, html_table, scraped_at
+           FROM src.album_metadata"""
+    ).fetchall()
+    inserted = 0
+    for row in src_rows:
+        src_album_id = row[0]
+        tgt_album_id = album_id_map[src_album_id]
+        existing = conn.execute(
+            "SELECT 1 FROM album_metadata WHERE album_id = ?", (tgt_album_id,)
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """INSERT INTO album_metadata
+                   (album_id, artist_text, type, released_text, recorded_text, rym_rating,
+                    rym_rating_best, rym_rating_count, ranked_text, genres_primary,
+                    genres_secondary, descriptors, language, html_table, scraped_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (tgt_album_id, *row[1:]),
+            )
+            inserted += 1
+    stats["album_metadata"] = f"{inserted} new / {len(src_rows)} total from source"
+
     # --- scraped_review_pages: remap album_id ---
     src_rows = conn.execute(
         "SELECT album_id, page, item_count, scraped_at FROM src.scraped_review_pages"

@@ -14,6 +14,7 @@ parallel on a second machine.
 - `db.py` — SQLite schema + helper functions (get-or-create artist/genre/user, save album, save review, track progress)
 - `scrape_rym_charts.py` — scrapes the genre chart (album, artist(s), release date, genres) into `albums`/`artists`/`genres`
 - `scrape_reviews.py` — for every album, scrapes language + every review (user, ISO date, star rating) into `users`/`user_reviews`
+- `scrape_details.py` — for every album, scrapes the release page's info table (artist, type, released, recorded, RYM rating, rank, genres, descriptors, language) into `album_metadata`, both as structured columns and a ready-to-embed HTML snippet
 - `backfill_artists.py` — one-off repair for the artist-extraction bug described below; kept as a record of the fix and a template for future backfills
 - `merge_dbs.py` — merges another machine's genre DB into this one once both are done scraping (see below)
 - `migrate_add_genre.py`, `fix_fk_references.py` — one-time migrations already applied to get the live DB to the current schema (a fresh DB created via `db.get_connection()` gets this schema from the start, so these don't need to run again)
@@ -39,6 +40,7 @@ parallel on a second machine.
    ```
    python scrape_rym_charts.py    # chart -> albums/artists/genres
    python scrape_reviews.py       # per-album language + reviews -> users/user_reviews
+   python scrape_details.py       # per-album info table -> album_metadata
    ```
 
 ### Seeding the second machine from an already-scraped DB (optional but recommended)
@@ -225,6 +227,25 @@ page N (N≥2) is `<release_url>reviews/{N}/`. Reviews-per-page isn't a fixed
 constant RYM guarantees, so `scrape_reviews.py` pages forward per album until
 an empty page, same pattern as the chart scraper.
 
+### Release page info table (`scrape_details.py`)
+
+Single fetch per album (page 1 of the release URL, same page `scrape_reviews.py`
+already visits for `Language`), reverse-engineered the same way:
+
+| Field | Selector / source |
+|---|---|
+| info table | `table.album_info tr` — each row is `<th class="info_hdr">Label</th><td>...</td>`; matched by label text, not position, since some albums omit rows (e.g. no `Ranked` row without enough ratings) |
+| Artist / Type / Released / Recorded / Ranked / Language | the row whose `th.info_hdr` text equals the label, `td`'s `.get_all_text()` (flattens the year link inside `Released`, etc.) |
+| RYM Rating | **not** parsed from the row's three sibling `<span>`s — read instead from `div[itemprop="aggregateRating"] meta[itemprop="ratingValue"\|"bestRating"\|"ratingCount"]`, the same schema.org markup pattern `scrape_reviews.py` already trusts for per-review `ratingValue` |
+| Genres (primary/secondary) | same `.release_pri_genres a.genre` / `.release_sec_genres a.genre` selectors as the chart scraper, scoped to `tr.release_genres` (a `Genres` row and, on some albums, a separate `Movements` row share this class, hence the label check) |
+| Descriptors | `tr.release_descriptors .release_pri_descriptors`, a single flat comma-separated text span, split on `,` |
+
+Output: `album_metadata` gets both structured columns (`type`, `released_text`,
+`rym_rating` as a float, `genres_primary` as a comma-joined string, etc.) for
+querying, and a pre-rendered `html_table` column — a semantic
+`<table class="rym-info-table">` with one `<tr><th>label</th><td>value</td></tr>`
+per populated field — ready to paste straight into a web page.
+
 ### `extract_name()` helper (shared by both scripts)
 
 RYM wraps *localized* names (anything with a romanization, e.g. Japanese/Korean
@@ -253,6 +274,7 @@ clean joins rather than re-parsing denormalized text:
 - `scraped_pages` (page, item_count, scraped_at) — chart-scrape resumability
 - `album_details` (album_id, review_count, reviews_complete, scraped_at) — tracks whether an album's full review history has been fetched
 - `scraped_review_pages` (album_id, page, item_count, scraped_at) — per-album review-page resumability
+- `album_metadata` (album_id, artist_text, type, released_text, recorded_text, rym_rating, rym_rating_best, rym_rating_count, ranked_text, genres_primary, genres_secondary, descriptors, language, html_table, scraped_at) — the release page's own info table (see below); presence of a row is what makes an album "done" for `scrape_details.py`
 
 ## Problems hit, and how they were handled
 

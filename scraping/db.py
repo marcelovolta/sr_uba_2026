@@ -79,6 +79,24 @@ CREATE TABLE IF NOT EXISTS scraped_review_pages (
     scraped_at TEXT NOT NULL,
     PRIMARY KEY (album_id, page)
 );
+
+CREATE TABLE IF NOT EXISTS album_metadata (
+    album_id         INTEGER PRIMARY KEY REFERENCES albums(id),
+    artist_text      TEXT,
+    type             TEXT,
+    released_text    TEXT,
+    recorded_text    TEXT,
+    rym_rating       REAL,
+    rym_rating_best  TEXT,
+    rym_rating_count INTEGER,
+    ranked_text      TEXT,
+    genres_primary   TEXT,
+    genres_secondary TEXT,
+    descriptors      TEXT,
+    language         TEXT,
+    html_table       TEXT NOT NULL,
+    scraped_at       TEXT NOT NULL
+);
 """
 
 
@@ -220,4 +238,40 @@ def mark_review_page_scraped(conn, album_id, page, item_count, scraped_at):
         """INSERT OR REPLACE INTO scraped_review_pages (album_id, page, item_count, scraped_at)
            VALUES (?, ?, ?, ?)""",
         (album_id, page, item_count, scraped_at),
+    )
+
+
+def album_metadata_scraped(conn, album_id):
+    row = conn.execute("SELECT 1 FROM album_metadata WHERE album_id = ?", (album_id,)).fetchone()
+    return row is not None
+
+
+def save_album_metadata(conn, album_id, fields, html_table, scraped_at):
+    """fields: dict with artist, type, released, recorded, rym_rating, rym_rating_best,
+    rym_rating_count, ranked, genres_primary (list), genres_secondary (list),
+    descriptors (list), language."""
+    conn.execute(
+        """INSERT OR REPLACE INTO album_metadata
+           (album_id, artist_text, type, released_text, recorded_text,
+            rym_rating, rym_rating_best, rym_rating_count, ranked_text,
+            genres_primary, genres_secondary, descriptors, language,
+            html_table, scraped_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            album_id,
+            fields.get("artist"),
+            fields.get("type"),
+            fields.get("released"),
+            fields.get("recorded"),
+            fields.get("rym_rating"),
+            fields.get("rym_rating_best"),
+            fields.get("rym_rating_count"),
+            fields.get("ranked"),
+            ", ".join(fields.get("genres_primary") or []) or None,
+            ", ".join(fields.get("genres_secondary") or []) or None,
+            ", ".join(fields.get("descriptors") or []) or None,
+            fields.get("language"),
+            html_table,
+            scraped_at,
+        ),
     )
