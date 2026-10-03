@@ -11,12 +11,20 @@ single biggest lever for going fast is minimizing dead time between an
 external kill and the next relaunch - treat this as a tight loop for the
 rest of the session, not an occasional check-in.
 
-Run the chart scrape first if `albums` is empty, then the review scrape:
+Run the chart scrape first if `albums` is empty, then the details scrape,
+then the review scrape:
 ```
 cd scraping
 source ../.venv/bin/activate
 python scrape_rym_charts.py    # only needed once, chart -> albums/artists/genres
+python scrape_details.py       # only needed once, per-album info table -> album_metadata + cover_url
 ```
+`scrape_details.py` captures `cover_url` in the same page fetch as the
+info-table metadata, so for any genre scraped from scratch this is the only
+cover step needed - don't run `scrape_covers.py` for a new genre, it's a
+separate request per album and now only exists to backfill genres scraped
+before this was merged in (ambient, psychedelia).
+
 Everything below applies to `scrape_reviews.py`, which is the long-running part.
 
 ## The loop (repeat for the rest of the session)

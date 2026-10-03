@@ -72,6 +72,22 @@ def extract_descriptors(page):
     return []
 
 
+def extract_cover_url(page):
+    """Cover art lives in <div class="coverart_<numeric id>"><img src=...>;
+    the numeric suffix varies per album so match on the class prefix. Same
+    page as the info table below, so this piggybacks on the fetch this
+    script already makes instead of costing a separate request (that's what
+    scrape_covers.py used to do, and why it's now only needed as a backfill
+    tool for genres scraped before this was merged in)."""
+    el = page.css('div[class^="coverart_"] img')
+    if not el:
+        return None
+    src = el[0].attrib.get("src")
+    if not src:
+        return None
+    return "https:" + src if src.startswith("//") else src
+
+
 def extract_details(page):
     rating, rating_best, rating_count = extract_rating(page)
     genres_primary, genres_secondary = extract_genres(page)
@@ -179,9 +195,16 @@ def process_album(conn, session, state, album_id, rank, title, url):
         fields = extract_details(resp)
         html_table = render_html_table(fields)
         db.save_album_metadata(conn, album_id, fields, html_table, now())
+
+        cover_url = extract_cover_url(resp)
+        # empty string (not NULL) marks "checked, genuinely no cover art found",
+        # distinct from NULL ("not attempted yet") so it isn't retried forever
+        db.set_album_cover(conn, album_id, cover_url or "")
+
         conn.commit()
         print(f"album {rank} '{title}': metadata -> type={fields['type']!r} "
-              f"rating={fields['rym_rating']!r} ranked={fields['ranked']!r}")
+              f"rating={fields['rym_rating']!r} ranked={fields['ranked']!r} "
+              f"cover={'yes' if cover_url else '(none found)'}")
         return True
 
 
@@ -195,7 +218,7 @@ def main():
            ORDER BY albums.rank""",
         (GENRE,),
     ).fetchall()
-    print(f"{len(albums)} albums need metadata")
+    print(f"{len(albums)} albums need metadata (cover_url is captured in the same pass)")
 
     state = {"solved": False}
 
