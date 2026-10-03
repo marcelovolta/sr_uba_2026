@@ -14,7 +14,8 @@ parallel on a second machine.
 - `db.py` — SQLite schema + helper functions (get-or-create artist/genre/user, save album, save review, track progress)
 - `scrape_rym_charts.py` — scrapes the genre chart (album, artist(s), release date, genres) into `albums`/`artists`/`genres`
 - `scrape_reviews.py` — for every album, scrapes language + every review (user, ISO date, star rating) into `users`/`user_reviews`
-- `scrape_details.py` — for every album, scrapes the release page's info table (artist, type, released, recorded, RYM rating, rank, genres, descriptors, language) into `album_metadata`, both as structured columns and a ready-to-embed HTML snippet
+- `scrape_details.py` — for every album, scrapes the release page's info table (artist, type, released, recorded, RYM rating, rank, genres, descriptors, language) into `album_metadata`, both as structured columns and a ready-to-embed HTML snippet; also captures `albums.cover_url` from the same page fetch (see below), so this is the only cover step a new genre needs
+- `scrape_covers.py` — standalone cover-art backfill, one request per album; only needed for a genre that was already scraped before cover capture was merged into `scrape_details.py` (ambient, psychedelia). Don't run this for a new genre — it's a redundant extra request per album that `scrape_details.py` already covers
 - `backfill_artists.py` — one-off repair for the artist-extraction bug described below; kept as a record of the fix and a template for future backfills
 - `merge_dbs.py` — merges another machine's genre DB into this one once both are done scraping (see below)
 - `migrate_add_genre.py`, `fix_fk_references.py` — one-time migrations already applied to get the live DB to the current schema (a fresh DB created via `db.get_connection()` gets this schema from the start, so these don't need to run again)
@@ -40,8 +41,13 @@ parallel on a second machine.
    ```
    python scrape_rym_charts.py    # chart -> albums/artists/genres
    python scrape_reviews.py       # per-album language + reviews -> users/user_reviews
-   python scrape_details.py       # per-album info table -> album_metadata
+   python scrape_details.py       # per-album info table -> album_metadata, AND albums.cover_url
    ```
+   `scrape_details.py` pulls the cover art off the same page it already
+   fetches for the info table, so a genre scraped from scratch gets covers
+   with no extra step and no extra request. (`scrape_covers.py` exists only
+   to backfill genres that were scraped before this was merged in - don't
+   run it for a new genre.)
 
 ### Seeding the second machine from an already-scraped DB (optional but recommended)
 
@@ -239,6 +245,7 @@ already visits for `Language`), reverse-engineered the same way:
 | RYM Rating | **not** parsed from the row's three sibling `<span>`s — read instead from `div[itemprop="aggregateRating"] meta[itemprop="ratingValue"\|"bestRating"\|"ratingCount"]`, the same schema.org markup pattern `scrape_reviews.py` already trusts for per-review `ratingValue` |
 | Genres (primary/secondary) | same `.release_pri_genres a.genre` / `.release_sec_genres a.genre` selectors as the chart scraper, scoped to `tr.release_genres` (a `Genres` row and, on some albums, a separate `Movements` row share this class, hence the label check) |
 | Descriptors | `tr.release_descriptors .release_pri_descriptors`, a single flat comma-separated text span, split on `,` |
+| Cover art (→ `albums.cover_url`, not `album_metadata`) | `div[class^="coverart_"] img::attr(src)` — the numeric class suffix varies per album, hence the prefix match; protocol-relative `//...` srcs get `https:` prepended |
 
 Output: `album_metadata` gets both structured columns (`type`, `released_text`,
 `rym_rating` as a float, `genres_primary` as a comma-joined string, etc.) for
@@ -264,7 +271,7 @@ Normalized rather than flat, since artists/genres/users repeat heavily and
 downstream work (recommender/feature notebooks elsewhere in this repo) wants
 clean joins rather than re-parsing denormalized text:
 
-- `albums` (genre, rank, title, release_date, url, language, page, scraped_at) — `url` globally unique, `(genre, rank)` unique per genre
+- `albums` (genre, rank, title, release_date, url, language, page, scraped_at, cover_url) — `url` globally unique, `(genre, rank)` unique per genre. `cover_url` is `NULL` until attempted, `''` if the page genuinely has no cover art, or the image URL; populated by `scrape_details.py` for any genre scraped from here on (see `scrape_covers.py` for the older per-request backfill path and its one known caveat below)
 - `artists` (name, url) — `url` unique
 - `album_artists` — junction, keeps credit order via `position`
 - `genres` (name) — unique (RYM's own genre tags on each album, not the chart genre)
@@ -360,3 +367,17 @@ clean joins rather than re-parsing denormalized text:
 - A handful of albums have zero genre tags or (for true compilations) a
   synthetic "Various Artists" credit — both are genuine gaps/edge cases in
   RYM's own markup, not extraction bugs.
+- **A small fraction of `cover_url` values are a placeholder, not real art.**
+  RYM sometimes serves `cdn.sonemic.net/3.0/img/blocked_art/enable_img_*.png`
+  (an "enable images" stand-in) in the exact same `coverart_` div instead of
+  the real cover, for albums that unambiguously do have cover art when
+  browsed normally (e.g. *Electric Ladyland*, *Odessey and Oracle*). Tested:
+  resetting these to `NULL` and re-fetching gets the *identical* placeholder
+  every time (150/150 in one retry batch) — this is not a transient
+  rate-limit or session fluke, so simply retrying doesn't fix it. Root cause
+  is still unconfirmed (most likely an "enable mature/sensitive content"
+  account preference our logged-out scraper session never sets); fixing it
+  for real would mean either an authenticated session with that preference
+  on, or sourcing those specific covers some other way. Filter
+  `cover_url LIKE '%blocked_art%'` to find them. Left as-is for now (ambient:
+  72/4950, psychedelia: 150/5040).

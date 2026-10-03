@@ -1,3 +1,11 @@
+"""Standalone cover-art backfill for albums that already have cover_url IS NULL.
+
+For any NEW genre, don't use this script - scrape_details.py now extracts
+cover_url in the same pass as the info-table metadata (same page, no extra
+request), so a fresh genre gets covers from the start. This script stays
+around only to backfill genres that were scraped before that merge happened
+(e.g. ambient, psychedelia got their covers via this script, after the fact).
+"""
 import datetime
 import random
 import time
@@ -9,7 +17,7 @@ from config import GENRE
 
 WAIT_SELECTOR = "body"
 MAX_ATTEMPTS = 2
-PAGE_DELAY_RANGE = (8, 18)
+PAGE_DELAY_RANGE = (30, 60)
 RATE_LIMIT_STATUSES = {403, 429, 503}
 RATE_LIMIT_COOLDOWN_SECONDS = 11 * 60
 MAX_COOLDOWNS = 3
