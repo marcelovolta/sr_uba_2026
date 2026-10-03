@@ -1,12 +1,21 @@
 #!/bin/bash
-# Supervises scrape_rym_charts.py -> scrape_reviews.py -> scrape_covers.py for
-# the genre in config.py. Relaunches on death, detects genuine completion vs.
-# process death, and flags real stalls (progress metric unchanged across
-# consecutive relaunches) rather than blindly retrying forever. See
-# scraping/README.md "Running unattended".
+# Supervises scrape_rym_charts.py -> scrape_reviews.py -> scrape_details.py for
+# the genre in config.py (scrape_details.py captures cover_url in the same
+# pass, so scrape_covers.py isn't part of this pipeline - it's backfill-only
+# for genres scraped before that was merged in). Relaunches on death, detects
+# genuine completion vs. process death, and flags real stalls (progress
+# metric unchanged across consecutive relaunches) rather than blindly
+# retrying forever. See scraping/README.md "Running unattended".
 set -uo pipefail
 cd "$(dirname "$0")"
-source .venv/bin/activate
+if [ -f .venv/bin/activate ]; then
+  source .venv/bin/activate
+elif [ -f ../.venv/bin/activate ]; then
+  source ../.venv/bin/activate
+else
+  echo "no .venv found at scraping/.venv or repo-root/.venv" >&2
+  exit 1
+fi
 
 progress() {
   python3 -c "
@@ -17,7 +26,8 @@ pages = conn.execute('SELECT COUNT(*) FROM scraped_pages').fetchone()[0]
 reviews = conn.execute('SELECT COUNT(*) FROM user_reviews').fetchone()[0]
 complete = conn.execute('SELECT COUNT(*) FROM album_details ad JOIN albums a ON a.id=ad.album_id WHERE a.genre=? AND ad.reviews_complete=1', (config.GENRE,)).fetchone()[0]
 covers = conn.execute('SELECT COUNT(*) FROM albums WHERE genre=? AND cover_url IS NOT NULL', (config.GENRE,)).fetchone()[0]
-print(f'PROGRESS albums={albums} chart_pages_scraped={pages} reviews={reviews} albums_reviews_complete={complete}/{albums} covers={covers}/{albums}')
+metadata = conn.execute('SELECT COUNT(*) FROM album_metadata am JOIN albums a ON a.id=am.album_id WHERE a.genre=?', (config.GENRE,)).fetchone()[0]
+print(f'PROGRESS albums={albums} chart_pages_scraped={pages} reviews={reviews} albums_reviews_complete={complete}/{albums} covers={covers}/{albums} metadata={metadata}/{albums}')
 "
 }
 
@@ -59,12 +69,13 @@ sys.exit(0 if (total > 0 and done == total) else 1)
 "
 }
 
-covers_complete() {
+details_complete() {
   python3 -c "
 import sqlite3, config
 conn = sqlite3.connect(config.DB_PATH)
 total = conn.execute('SELECT COUNT(*) FROM albums WHERE genre=?', (config.GENRE,)).fetchone()[0]
-done = conn.execute('SELECT COUNT(*) FROM albums WHERE genre=? AND cover_url IS NOT NULL', (config.GENRE,)).fetchone()[0]
+done = conn.execute('''SELECT COUNT(*) FROM albums a JOIN album_metadata am ON am.album_id=a.id
+                        WHERE a.genre=?''', (config.GENRE,)).fetchone()[0]
 import sys
 sys.exit(0 if (total > 0 and done == total) else 1)
 "
@@ -119,8 +130,8 @@ echo "WATCHDOG_STAGE_TRANSITION charts_done_starting_reviews"
 run_stage scrape_reviews.py reviews.log reviews_complete \
   "SELECT COUNT(*) FROM user_reviews"
 
-echo "WATCHDOG_STAGE_TRANSITION reviews_done_starting_covers"
-run_stage scrape_covers.py covers.log covers_complete \
-  "SELECT COUNT(*) FROM albums WHERE cover_url IS NOT NULL"
+echo "WATCHDOG_STAGE_TRANSITION reviews_done_starting_details"
+run_stage scrape_details.py details.log details_complete \
+  "SELECT COUNT(*) FROM album_metadata"
 
 echo "WATCHDOG_ALL_DONE"
