@@ -1,6 +1,10 @@
 # Generated/raw data - regenerate via the notebooks, not versioned.
 # Several files here exceed GitHub's 100MB per-file limit anyway.
 datos/
+notebooks\ profesor/datos/
+
+# Trained models (e.g. surprise's algo.pkl) - regenerate by running the notebooks
+*.pkl
 
 # Python
 .venv/
