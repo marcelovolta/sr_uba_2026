@@ -5,6 +5,8 @@ notebooks\ profesor/datos/
 
 # Trained models (e.g. surprise's algo.pkl) - regenerate by running the notebooks
 *.pkl
+notebooks\ profesor/checkpoint.keras
+notebooks\ profesor/model.png
 
 # Python
 .venv/
