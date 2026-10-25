@@ -343,6 +343,68 @@ cross join total_matrix;
 
 
 
+--Coverage corrected
+--Get only albums that are reviewed more than x times
+WITH selected_albums AS (
+	SELECT 
+		al.id AS album_id,
+		COUNT(DISTINCT ur.id) AS rev_count
+	FROM albums AS al
+	INNER JOIN user_reviews AS ur
+	ON al.id = ur.album_id
+	GROUP BY 1
+	HAVING rev_count > 15
+), 
 
+--Get only users that have reviewed at least x albums from the pre-selection
+selected_users AS (
+	SELECT 
+		users.username, 
+		COUNT(DISTINCT ur.id) AS rev_count
+	FROM users
+	INNER JOIN user_reviews AS ur
+	ON users.username = ur.username
+	WHERE ur.album_id IN (SELECT DISTINCT album_id FROM selected_albums)
+	GROUP BY 1
+	HAVING rev_count >= 15
+), 
+--Now count
+count_selected_users AS (
+	SELECT COUNT(DISTINCT su.username) AS user_count
+	FROM selected_users AS su
+),
+
+count_selected_albums AS (
+	SELECT COUNT(DISTINCT sa.album_id) AS album_count
+	FROM selected_albums AS sa 
+),
+
+total_matrix AS (
+	SELECT 
+		csu.user_count,
+		csa.album_count,
+		csu.user_count * csa.album_count AS total_count
+	FROM count_selected_users AS csu
+	CROSS JOIN count_selected_albums AS csa
+), 
+
+total_interactions AS (
+	SELECT COUNT(DISTINCT ur.id) AS total_interactions
+	FROM user_reviews AS ur
+	WHERE ur.album_id IN (SELECT DISTINCT album_id FROM selected_albums)
+	AND ur.username IN (SELECT DISTINCT username FROM selected_users)	
+)
+
+SELECT 
+	tm.user_count, 
+	tm.album_count,
+	ti.total_interactions,
+	tm.total_count AS possible_interactions,
+	(100.0 * ti.total_interactions / tm.total_count) AS percent_coverage
+FROM total_matrix AS tm
+CROSS JOIN total_interactions AS ti;
+	
+SELECT COUNT(*)
+FROM users;
 
 
